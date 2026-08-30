@@ -196,20 +196,36 @@ function drawLevel() {
   }
 }
 
-// Placeholder block marker: a flat diamond floating above each occupied
-// cell. Full 3D box with proper faces + tipping rotation comes next session.
-function drawBlockMarker(row, col) {
-  const { x, y } = gridToScreen(row, col);
-  const hw = tileWidth / 2 - 8;
-  const hh = tileHeight / 2 - 4;
-  const lift = -12; // float above the tile surface
+const standingHeight = 70; // tall box, when upright
+const lyingHeight = 30;    // flatter box, when lying down
 
-  const top = { x: x, y: y + lift };
-  const right = { x: x + hw, y: y + hh + lift };
-  const bottom = { x: x, y: y + tileHeight - 8 + lift };
-  const left = { x: x - hw, y: y + hh + lift };
+function isStandingCells(cell1, cell2) {
+  return cell1.row === cell2.row && cell1.col === cell2.col;
+}
 
-  fillPoly([top, right, bottom, left], "#3498db");
+// Draws the block as a real 3D box, sized to whatever footprint it
+// currently covers (one cell if standing, two if lying flat).
+function drawBlockBox(cell1, cell2, height) {
+  const r1 = Math.min(cell1.row, cell2.row);
+  const r2 = Math.max(cell1.row, cell2.row);
+  const c1 = Math.min(cell1.col, cell2.col);
+  const c2 = Math.max(cell1.col, cell2.col);
+
+  // Footprint corners — same idea as a single tile, just spanning a range
+  const top = gridToScreen(r1, c1);
+  const right = gridToScreen(r1, c2 + 1);
+  const bottom = gridToScreen(r2 + 1, c2 + 1);
+  const left = gridToScreen(r2 + 1, c1);
+
+  // Roof corners: same footprint, shifted upward by the box's height
+  const roofTop = { x: top.x, y: top.y - height };
+  const roofRight = { x: right.x, y: right.y - height };
+  const roofBottom = { x: bottom.x, y: bottom.y - height };
+  const roofLeft = { x: left.x, y: left.y - height };
+
+  fillPoly([left, bottom, roofBottom, roofLeft], "#1b4f72");   // left face (darkest)
+  fillPoly([right, bottom, roofBottom, roofRight], "#2874a6"); // right face (medium)
+  fillPoly([roofTop, roofRight, roofBottom, roofLeft], "#5dade2"); // top face (lightest)
 }
 
 function lerp(a, b, t) {
@@ -220,7 +236,7 @@ function gameLoop(timestamp) {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   drawLevel();
 
-  let cell1, cell2;
+  let cell1, cell2, blockHeight;
 
   if (isAnimating) {
     const elapsed = timestamp - animStartTime;
@@ -239,15 +255,17 @@ function gameLoop(timestamp) {
       row: lerp(animStartCell2.row, animEndCell2.row, t),
       col: lerp(animStartCell2.col, animEndCell2.col, t)
     };
+
+    const startHeight = isStandingCells(animStartCell1, animStartCell2) ? standingHeight : lyingHeight;
+    const endHeight = isStandingCells(animEndCell1, animEndCell2) ? standingHeight : lyingHeight;
+    blockHeight = lerp(startHeight, endHeight, t);
   } else {
     cell1 = block.cell1;
     cell2 = block.cell2;
+    blockHeight = isStandingCells(cell1, cell2) ? standingHeight : lyingHeight;
   }
 
-  drawBlockMarker(cell1.row, cell1.col);
-  if (cell2.row !== cell1.row || cell2.col !== cell1.col) {
-    drawBlockMarker(cell2.row, cell2.col);
-  }
+  drawBlockBox(cell1, cell2, blockHeight);
 
   requestAnimationFrame(gameLoop);
 }
