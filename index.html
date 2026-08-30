@@ -2,62 +2,23 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Blox</title>
+  <title>Bloxorz</title>
   <style>
     body {
       margin: 0;
       display: flex;
-      flex-direction: column;
       justify-content: center;
       align-items: center;
-      min-height: 100vh;
+      height: 100vh;
       background: #222;
-      gap: 20px;
-      padding: 20px;
-      box-sizing: border-box;
     }
     canvas {
       background: #333;
-      /* Fixed internal resolution (set via width/height attributes below),
-         but scale visually to fit any screen without touching our drawing math */
-      max-width: 100%;
-      height: auto;
     }
-    #controls {
-      display: grid;
-      grid-template-columns: 60px 60px 60px;
-      grid-template-rows: 60px 60px 60px;
-      gap: 6px;
-    }
-    #controls button {
-      font-size: 24px;
-      border: none;
-      border-radius: 8px;
-      background: #444;
-      color: white;
-      touch-action: manipulation; /* prevents double-tap-to-zoom delay */
-      user-select: none;
-    }
-    #controls button:active {
-      background: #666;
-    }
-    #btn-up   { grid-column: 2; grid-row: 1; }
-    #btn-left { grid-column: 1; grid-row: 2; }
-    #btn-down { grid-column: 2; grid-row: 2; }
-    #btn-right{ grid-column: 3; grid-row: 2; }
   </style>
 </head>
 <body>
-  <canvas id="gameCanvas" width="550" height="320"></canvas>
-
-  <div id="controls">
-    <button id="btn-up">▲</button>
-    <button id="btn-left">◀</button>
-    <button id="btn-down">▼</button>
-    <button id="btn-right">▶</button>
-  </div>
-
+  <canvas id="gameCanvas" width="550" height="400"></canvas>
   <script src="game.js"></script>
 </body>
 </html>
