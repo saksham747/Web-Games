@@ -6,7 +6,7 @@ const tileWidth = 60;
 const tileHeight = 30;
 const tileDepth = 14; // how "tall" each tile's side walls look
 const originX = 200;
-const originY = 20;
+const originY = 80;
 
 const animDuration = 150; // milliseconds
 
@@ -24,13 +24,12 @@ let block = {
   cell2: { row: 0, col: 2 }
 };
 
-// Animation state — now stored as GRID coordinates, not pixels.
-// We interpolate row/col first, then project to screen each frame.
+// Animation state. We only need where the block STARTED and which
+// direction it's tipping — true rotation math derives the rest.
 let isAnimating = false;
 let animStartCell1 = null;
 let animStartCell2 = null;
-let animEndCell1 = null;
-let animEndCell2 = null;
+let animDirection = null;
 let animStartTime = 0;
 
 document.addEventListener("keydown", (event) => {
@@ -39,16 +38,18 @@ document.addEventListener("keydown", (event) => {
   const startCell1 = { ...block.cell1 };
   const startCell2 = { ...block.cell2 };
 
-  if (event.key === "ArrowRight") move("right");
-  else if (event.key === "ArrowLeft") move("left");
-  else if (event.key === "ArrowUp") move("up");
-  else if (event.key === "ArrowDown") move("down");
+  let direction = null;
+  if (event.key === "ArrowRight") direction = "right";
+  else if (event.key === "ArrowLeft") direction = "left";
+  else if (event.key === "ArrowUp") direction = "up";
+  else if (event.key === "ArrowDown") direction = "down";
   else return;
+
+  move(direction);
 
   animStartCell1 = startCell1;
   animStartCell2 = startCell2;
-  animEndCell1 = { ...block.cell1 };
-  animEndCell2 = { ...block.cell2 };
+  animDirection = direction;
   animStartTime = performance.now();
   isAnimating = true;
 });
@@ -148,6 +149,38 @@ function gridToScreen(row, col) {
   };
 }
 
+// Projects a full 3D world point (x = col, y = height, z = row) to screen.
+// gridToScreen is just this with y (height) always 0.
+function worldToScreen(p) {
+  return {
+    x: originX + (p.x - p.z) * (tileWidth / 2),
+    y: originY + (p.x + p.z) * (tileHeight / 2) - p.y * heightScale
+  };
+}
+
+// Rotates one 3D corner around a pivot edge by angle theta, simulating a
+// physical tip. Since the block only ever moves axis-aligned, the rotation
+// only ever affects two of the three coordinates at once:
+//   - rolling left/right rotates in the x/height plane (z stays fixed)
+//   - rolling up/down rotates in the z/height plane (x stays fixed)
+// "sign" flips the rotation direction depending on which way we're tipping.
+function tipCorner(p, axis, pivot, sign, theta) {
+  const cosT = Math.cos(theta);
+  const sinT = Math.sin(theta);
+
+  if (axis === "x") {
+    const u = p.x - pivot;
+    const newU = u * cosT + sign * p.y * sinT;
+    const newY = -sign * u * sinT + p.y * cosT;
+    return { x: pivot + newU, y: newY, z: p.z };
+  } else {
+    const w = p.z - pivot;
+    const newW = w * cosT + sign * p.y * sinT;
+    const newY = -sign * w * sinT + p.y * cosT;
+    return { x: p.x, y: newY, z: pivot + newW };
+  }
+}
+
 // Fills a polygon given an array of {x, y} points, in order.
 function fillPoly(points, color) {
   ctx.fillStyle = color;
@@ -196,8 +229,10 @@ function drawLevel() {
   }
 }
 
-const standingHeight = 70; // tall box, when upright
-const lyingHeight = 30;    // flatter box, when lying down
+const standingHeight = 1.5;  // tall box, in GRID UNITS (was raw pixels)
+const lyingHeight = 0.75;    // flatter box, in GRID UNITS
+const heightScale = 44;      // pixels per 1.0 grid unit of height — the only
+                              // place height gets converted to actual pixels
 
 function isStandingCells(cell1, cell2) {
   return cell1.row === cell2.row && cell1.col === cell2.col;
@@ -218,25 +253,55 @@ function drawBlockBox(cell1, cell2, height) {
   const left = gridToScreen(r2 + 1, c1);
 
   // Roof corners: same footprint, shifted upward by the box's height
-  const roofTop = { x: top.x, y: top.y - height };
-  const roofRight = { x: right.x, y: right.y - height };
-  const roofBottom = { x: bottom.x, y: bottom.y - height };
-  const roofLeft = { x: left.x, y: left.y - height };
+  // (height is in grid units, so scale it to pixels here — same rule
+  // worldToScreen follows)
+  const roofTop = { x: top.x, y: top.y - height * heightScale };
+  const roofRight = { x: right.x, y: right.y - height * heightScale };
+  const roofBottom = { x: bottom.x, y: bottom.y - height * heightScale };
+  const roofLeft = { x: left.x, y: left.y - height * heightScale };
 
   fillPoly([left, bottom, roofBottom, roofLeft], "#1b4f72");   // left face (darkest)
   fillPoly([right, bottom, roofBottom, roofRight], "#2874a6"); // right face (medium)
   fillPoly([roofTop, roofRight, roofBottom, roofLeft], "#5dade2"); // top face (lightest)
 }
 
-function lerp(a, b, t) {
-  return a + (b - a) * t;
+// Draws the block mid-roll: rotating around the correct pivot edge based
+// on its shape BEFORE the move and which direction it's tipping.
+// t goes from 0 (start of the move) to 1 (fully tipped, 90 degrees).
+function drawBlockTipping(startCell1, startCell2, direction, t) {
+  const c1 = Math.min(startCell1.col, startCell2.col);
+  const c2 = Math.max(startCell1.col, startCell2.col);
+  const r1 = Math.min(startCell1.row, startCell2.row);
+  const r2 = Math.max(startCell1.row, startCell2.row);
+  const h = isStandingCells(startCell1, startCell2) ? standingHeight : lyingHeight;
+
+  const theta = t * (Math.PI / 2); // 0 to 90 degrees, in radians
+  const axis = (direction === "left" || direction === "right") ? "x" : "z";
+  const sign = (direction === "right" || direction === "down") ? 1 : -1;
+  const pivot = axis === "x"
+    ? (sign > 0 ? c2 + 1 : c1)
+    : (sign > 0 ? r2 + 1 : r1);
+
+  // The box's 8 corners, before rotation: 4 on the ground, 4 on the roof
+  const bottomsRaw = [
+    { x: c1,     y: 0, z: r1 },
+    { x: c2 + 1, y: 0, z: r1 },
+    { x: c2 + 1, y: 0, z: r2 + 1 },
+    { x: c1,     y: 0, z: r2 + 1 }
+  ];
+  const topsRaw = bottomsRaw.map((p) => ({ x: p.x, y: h, z: p.z }));
+
+  const bottoms = bottomsRaw.map((p) => worldToScreen(tipCorner(p, axis, pivot, sign, theta)));
+  const tops = topsRaw.map((p) => worldToScreen(tipCorner(p, axis, pivot, sign, theta)));
+
+  fillPoly([bottoms[3], bottoms[2], tops[2], tops[3]], "#1b4f72");   // left face
+  fillPoly([bottoms[1], bottoms[2], tops[2], tops[1]], "#2874a6");   // right face
+  fillPoly([tops[0], tops[1], tops[2], tops[3]], "#5dade2");         // top face
 }
 
 function gameLoop(timestamp) {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   drawLevel();
-
-  let cell1, cell2, blockHeight;
 
   if (isAnimating) {
     const elapsed = timestamp - animStartTime;
@@ -247,25 +312,11 @@ function gameLoop(timestamp) {
       isAnimating = false;
     }
 
-    cell1 = {
-      row: lerp(animStartCell1.row, animEndCell1.row, t),
-      col: lerp(animStartCell1.col, animEndCell1.col, t)
-    };
-    cell2 = {
-      row: lerp(animStartCell2.row, animEndCell2.row, t),
-      col: lerp(animStartCell2.col, animEndCell2.col, t)
-    };
-
-    const startHeight = isStandingCells(animStartCell1, animStartCell2) ? standingHeight : lyingHeight;
-    const endHeight = isStandingCells(animEndCell1, animEndCell2) ? standingHeight : lyingHeight;
-    blockHeight = lerp(startHeight, endHeight, t);
+    drawBlockTipping(animStartCell1, animStartCell2, animDirection, t);
   } else {
-    cell1 = block.cell1;
-    cell2 = block.cell2;
-    blockHeight = isStandingCells(cell1, cell2) ? standingHeight : lyingHeight;
+    const height = isStandingCells(block.cell1, block.cell2) ? standingHeight : lyingHeight;
+    drawBlockBox(block.cell1, block.cell2, height);
   }
-
-  drawBlockBox(cell1, cell2, blockHeight);
 
   requestAnimationFrame(gameLoop);
 }
