@@ -1,0 +1,115 @@
+from collections import deque
+
+def is_floor(grid, row, col):
+    if row < 0 or row >= len(grid):
+        return False
+    if col < 0 or col >= len(grid[row]):
+        return False
+    return grid[row][col] != 0
+
+def move(cell1, cell2, direction):
+    r1, c1 = cell1
+    r2, c2 = cell2
+    is_standing = (r1 == r2 and c1 == c2)
+
+    if direction == 'right':
+        if is_standing:
+            cell1, cell2 = (r1, c1 + 1), (r1, c1 + 2)
+        elif r1 == r2:
+            far_col = max(c1, c2) + 1
+            cell1, cell2 = (r1, far_col), (r1, far_col)
+        else:
+            cell1, cell2 = (r1, c1 + 1), (r2, c2 + 1)
+    elif direction == 'left':
+        if is_standing:
+            cell1, cell2 = (r1, c1 - 2), (r1, c1 - 1)
+        elif r1 == r2:
+            near_col = min(c1, c2) - 1
+            cell1, cell2 = (r1, near_col), (r1, near_col)
+        else:
+            cell1, cell2 = (r1, c1 - 1), (r2, c2 - 1)
+    elif direction == 'up':
+        if is_standing:
+            cell1, cell2 = (r1 - 2, c1), (r1 - 1, c1)
+        elif c1 == c2:
+            near_row = min(r1, r2) - 1
+            cell1, cell2 = (near_row, c1), (near_row, c1)
+        else:
+            cell1, cell2 = (r1 - 1, c1), (r2 - 1, c2)
+    elif direction == 'down':
+        if is_standing:
+            cell1, cell2 = (r1 + 1, c1), (r1 + 2, c1)
+        elif c1 == c2:
+            far_row = max(r1, r2) + 1
+            cell1, cell2 = (far_row, c1), (far_row, c1)
+        else:
+            cell1, cell2 = (r1 + 1, c1), (r2 + 1, c2)
+
+    return cell1, cell2
+
+def canonical(cell1, cell2):
+    return tuple(sorted([cell1, cell2]))
+
+def solve(grid, label):
+    start = goal = None
+    for r, row in enumerate(grid):
+        for c, v in enumerate(row):
+            if v == 3:
+                start = (r, c)
+            if v == 2:
+                goal = (r, c)
+
+    start_state = canonical(start, start)
+    visited = {start_state: None}
+    queue = deque([start_state])
+    directions = ['up', 'down', 'left', 'right']
+    found = None
+
+    while queue:
+        state = queue.popleft()
+        cell1, cell2 = state
+        if cell1 == cell2 == goal:
+            found = state
+            break
+        for d in directions:
+            nc1, nc2 = move(cell1, cell2, d)
+            if not is_floor(grid, *nc1) or not is_floor(grid, *nc2):
+                continue  # falls off — dead end, resets to start
+            nstate = canonical(nc1, nc2)
+            if nstate not in visited:
+                visited[nstate] = (state, d)
+                queue.append(nstate)
+
+    print(f"--- {label} ---")
+    print(f"start={start}, goal={goal}")
+    if found:
+        path = []
+        s = found
+        while visited[s] is not None:
+            prev, d = visited[s]
+            path.append(d)
+            s = prev
+        path.reverse()
+        print(f"SOLVABLE in {len(path)} moves: {path}")
+    else:
+        print(f"NOT SOLVABLE — goal unreachable. States explored: {len(visited)}")
+    print()
+
+level2 = [
+    [3, 1, 1, 1, 0, 0, 0, 0],
+    [0, 1, 1, 1, 1, 1, 0, 0],
+    [0, 0, 0, 1, 1, 1, 1, 1],
+    [0, 0, 0, 0, 0, 1, 1, 1],
+    [0, 0, 0, 0, 0, 0, 1, 2]
+]
+
+level3 = [
+    [0, 3, 1, 1, 0, 0, 0, 0],
+    [0, 0, 1, 1, 1, 1, 1, 0],
+    [0, 0, 0, 1, 1, 1, 1, 0],
+    [0, 0, 0, 0, 0, 1, 1, 1],
+    [0, 0, 0, 0, 0, 1, 1, 2]
+]
+
+solve(level2, "Level 2")
+solve(level3, "Level 3")

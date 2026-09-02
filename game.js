@@ -5,24 +5,50 @@ const ctx = canvas.getContext("2d");
 const tileWidth = 60;
 const tileHeight = 30;
 const tileDepth = 14; // how "tall" each tile's side walls look
-const originX = 200;
-const originY = 80;
+let originX; // computed per level by updateOrigin() — see below
+let originY;
 
 const animDuration = 150; // milliseconds
 
-// 0 = hole (nothing there), 1 = floor, 2 = goal tile
-const level = [
-  [0, 0, 1, 1, 1, 0, 0, 0],
-  [0, 0, 1, 1, 1, 1, 1, 0],
-  [0, 0, 0, 1, 1, 1, 1, 1],
-  [0, 0, 0, 0, 0, 1, 2, 1],
-  [0, 0, 0, 0, 0, 1, 1, 1]
+// Tile values: 0 = hole, 1 = floor, 2 = goal, 3 = start (also walkable floor)
+const levels = [
+  // Level 1
+  [
+    [0, 0, 3, 1, 1, 0, 0, 0],
+    [0, 0, 1, 1, 1, 1, 1, 0],
+    [0, 0, 0, 1, 1, 1, 1, 1],
+    [0, 0, 0, 0, 0, 1, 2, 1],
+    [0, 0, 0, 0, 0, 1, 1, 1]
+  ],
+  // Level 2
+  [
+    [3, 1, 1, 1, 0, 0, 0, 0],
+    [0, 1, 1, 1, 1, 1, 0, 0],
+    [0, 0, 0, 1, 1, 1, 1, 1],
+    [0, 0, 0, 0, 0, 1, 1, 1],
+    [0, 0, 0, 0, 0, 0, 1, 2]
+  ],
+  // Level 3
+  [
+    [0, 3, 1, 1, 0, 0, 0, 0],
+    [0, 0, 1, 1, 1, 1, 1, 0],
+    [0, 0, 0, 1, 1, 1, 1, 0],
+    [0, 0, 0, 0, 0, 1, 1, 1],
+    [0, 0, 0, 0, 0, 1, 1, 2]
+  ]
 ];
 
+let currentLevelIndex = 0;
+let level; // set by loadLevel() below
+
 let block = {
-  cell1: { row: 0, col: 2 },
-  cell2: { row: 0, col: 2 }
-};
+  cell1: { row: 0, col: 0 },
+  cell2: { row: 0, col: 0 }
+}; // placeholder — loadLevel() sets the real starting position
+
+// Banner message shown at the top of the canvas. loadLevel() sets the
+// actual initial text.
+let message = null;
 
 // Animation state. We only need where the block STARTED and which
 // direction it's tipping — true rotation math derives the rest.
@@ -32,18 +58,21 @@ let animStartCell2 = null;
 let animDirection = null;
 let animStartTime = 0;
 
-document.addEventListener("keydown", (event) => {
-  if (isAnimating) return;
+// Win sequencing: "playing" -> "flourish" -> "wonOverlay"
+let phase = "playing";
+let pendingWin = false; // set by move() the instant a win is detected
+let winFlourishStartTime = 0;
+const winFlourishDuration = 700; // milliseconds
+
+// Shared by both keyboard and on-screen buttons: kicks off a move plus
+// the animation that visualizes it, if we're not already mid-animation.
+function handleDirectionInput(direction) {
+  if (isAnimating || phase !== "playing") return;
+
+  message = null; // clear instructions (or a prior "Trying again...") on any new move
 
   const startCell1 = { ...block.cell1 };
   const startCell2 = { ...block.cell2 };
-
-  let direction = null;
-  if (event.key === "ArrowRight") direction = "right";
-  else if (event.key === "ArrowLeft") direction = "left";
-  else if (event.key === "ArrowUp") direction = "up";
-  else if (event.key === "ArrowDown") direction = "down";
-  else return;
 
   move(direction);
 
@@ -52,7 +81,23 @@ document.addEventListener("keydown", (event) => {
   animDirection = direction;
   animStartTime = performance.now();
   isAnimating = true;
+}
+
+document.addEventListener("keydown", (event) => {
+  let direction = null;
+  if (event.key === "ArrowRight") direction = "right";
+  else if (event.key === "ArrowLeft") direction = "left";
+  else if (event.key === "ArrowUp") direction = "up";
+  else if (event.key === "ArrowDown") direction = "down";
+  else return;
+
+  handleDirectionInput(direction);
 });
+
+document.getElementById("btn-up").addEventListener("click", () => handleDirectionInput("up"));
+document.getElementById("btn-down").addEventListener("click", () => handleDirectionInput("down"));
+document.getElementById("btn-left").addEventListener("click", () => handleDirectionInput("left"));
+document.getElementById("btn-right").addEventListener("click", () => handleDirectionInput("right"));
 
 function isFloor(row, col) {
   if (row < 0 || row >= level.length) return false;
@@ -60,9 +105,61 @@ function isFloor(row, col) {
   return level[row][col] !== 0;
 }
 
+// Scans a level's grid for its start tile (value 3) — same nested-loop
+// pattern used back in drawLevel(), just searching instead of drawing.
+function findStartCell(grid) {
+  for (let row = 0; row < grid.length; row++) {
+    for (let col = 0; col < grid[row].length; col++) {
+      if (grid[row][col] === 3) return { row, col };
+    }
+  }
+  return { row: 0, col: 0 }; // fallback, shouldn't happen if levels are well-formed
+}
+
+// Puts the block back at the CURRENT level's start tile — used after a fall.
 function resetBlock() {
-  block.cell1 = { row: 0, col: 2 };
-  block.cell2 = { row: 0, col: 2 };
+  const start = findStartCell(level);
+  block.cell1 = { row: start.row, col: start.col };
+  block.cell2 = { row: start.row, col: start.col };
+}
+
+// Computes originX/originY so the CURRENT level's grid sits centered in
+// the canvas, however big or small it is. Works by figuring out the
+// on-screen bounding box the grid's tiles would occupy (using the same
+// row/col -> screen formula as everything else), then choosing an origin
+// that centers that box.
+function updateOrigin() {
+  const rows = level.length;
+  const cols = level[0].length;
+
+  // Screen-space extent of the tile grid, BEFORE any origin offset —
+  // same corner logic as gridToScreen, just tracking the overall range.
+  const minX = -rows * (tileWidth / 2);
+  const maxX = cols * (tileWidth / 2);
+  const maxY = (rows + cols) * (tileHeight / 2) + tileDepth; // + pedestal depth below
+
+  // Extra headroom: standing block + win-bounce peak reach roughly
+  // (standingHeight * 1.25 + hop) * heightScale pixels above the tiles —
+  // 160 comfortably covers that with some buffer. bottomMargin is just
+  // a little breathing room below the pedestal walls.
+  const topMargin = 160;
+  const bottomMargin = 20;
+
+  const contentHeight = maxY + topMargin + bottomMargin;
+
+  originX = canvas.width / 2 - (minX + maxX) / 2;
+  originY = (canvas.height - contentHeight) / 2 + topMargin;
+}
+
+// Loads a level by index (wrapping around if it goes past the last one),
+// and resets everything needed for a fresh attempt at it.
+function loadLevel(index) {
+  currentLevelIndex = ((index % levels.length) + levels.length) % levels.length;
+  level = levels[currentLevelIndex];
+  updateOrigin();
+  resetBlock();
+  phase = "playing";
+  message = "Get the block to stand tall on the orange tile.";
 }
 
 function move(direction) {
@@ -129,12 +226,12 @@ function move(direction) {
 
   if (!isFloor(r1now, c1now) || !isFloor(r2now, c2now)) {
     resetBlock();
+    message = "Trying again...";
     return;
   }
 
   if (r1now === r2now && c1now === c2now && level[r1now][c1now] === 2) {
-    alert("You win!");
-    resetBlock();
+    pendingWin = true; // don't reset or alert yet — let the landing tip finish first
   }
 }
 
@@ -219,7 +316,7 @@ function drawLevel() {
     for (let col = 0; col < level[row].length; col++) {
       const tile = level[row][col];
 
-      if (tile === 1) {
+      if (tile === 1 || tile === 3) {
         drawTile(row, col, "#b0b0b0", "#787878", "#959595");
       } else if (tile === 2) {
         drawTile(row, col, "orange", "#b35900", "#cc6600");
@@ -229,7 +326,7 @@ function drawLevel() {
   }
 }
 
-const standingHeight = 1.5;  // tall box, in GRID UNITS (was raw pixels)
+const standingHeight = 1.6;  // tall box, in GRID UNITS (was raw pixels)
 const lyingHeight = 0.75;    // flatter box, in GRID UNITS
 const heightScale = 44;      // pixels per 1.0 grid unit of height — the only
                               // place height gets converted to actual pixels
@@ -299,6 +396,42 @@ function drawBlockTipping(startCell1, startCell2, direction, t) {
   fillPoly([tops[0], tops[1], tops[2], tops[3]], "#5dade2");         // top face
 }
 
+// Win flourish: the block hops off the tile and stretches taller mid-air,
+// landing back down. ft goes 0 (just landed) to 1 (flourish finished).
+// Reuses the same box-corner idea as drawBlockBox, plus an upward offset
+// (applied to BOTH base and roof) that changes over time via a sine arc.
+function drawBlockFlourish(cell1, cell2, ft) {
+  const r1 = Math.min(cell1.row, cell2.row);
+  const r2 = Math.max(cell1.row, cell2.row);
+  const c1 = Math.min(cell1.col, cell2.col);
+  const c2 = Math.max(cell1.col, cell2.col);
+
+  const arc = Math.sin(ft * Math.PI); // 0 -> 1 -> 0 across the flourish
+  const hop = arc * 0.9;              // how high it lifts off the tile, in world units
+  const stretch = 1 + arc * 0.25;     // a bit taller while airborne
+  const h = standingHeight * stretch;
+  const liftPx = hop * heightScale;
+
+  const top = gridToScreen(r1, c1);
+  const right = gridToScreen(r1, c2 + 1);
+  const bottom = gridToScreen(r2 + 1, c2 + 1);
+  const left = gridToScreen(r2 + 1, c1);
+
+  const baseTop = { x: top.x, y: top.y - liftPx };
+  const baseRight = { x: right.x, y: right.y - liftPx };
+  const baseBottom = { x: bottom.x, y: bottom.y - liftPx };
+  const baseLeft = { x: left.x, y: left.y - liftPx };
+
+  const roofTop = { x: baseTop.x, y: baseTop.y - h * heightScale };
+  const roofRight = { x: baseRight.x, y: baseRight.y - h * heightScale };
+  const roofBottom = { x: baseBottom.x, y: baseBottom.y - h * heightScale };
+  const roofLeft = { x: baseLeft.x, y: baseLeft.y - h * heightScale };
+
+  fillPoly([baseLeft, baseBottom, roofBottom, roofLeft], "#1b4f72");
+  fillPoly([baseRight, baseBottom, roofBottom, roofRight], "#2874a6");
+  fillPoly([roofTop, roofRight, roofBottom, roofLeft], "#5dade2");
+}
+
 function gameLoop(timestamp) {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   drawLevel();
@@ -310,15 +443,53 @@ function gameLoop(timestamp) {
     if (t >= 1) {
       t = 1;
       isAnimating = false;
+
+      if (pendingWin) {
+        pendingWin = false;
+        phase = "flourish";
+        winFlourishStartTime = timestamp;
+      }
     }
 
     drawBlockTipping(animStartCell1, animStartCell2, animDirection, t);
+  } else if (phase === "flourish") {
+    const elapsed = timestamp - winFlourishStartTime;
+    let ft = elapsed / winFlourishDuration;
+
+    if (ft >= 1) {
+      ft = 1;
+      loadLevel(currentLevelIndex + 1); // advance — wraps back to level 1 after the last one
+    }
+
+    drawBlockFlourish(block.cell1, block.cell2, ft);
   } else {
     const height = isStandingCells(block.cell1, block.cell2) ? standingHeight : lyingHeight;
     drawBlockBox(block.cell1, block.cell2, height);
   }
 
+  drawMessage();
+  drawLevelLabel();
+
   requestAnimationFrame(gameLoop);
 }
 
+function drawMessage() {
+  if (!message) return;
+
+  ctx.fillStyle = "white";
+  ctx.font = "18px Arial";
+  ctx.textAlign = "center";
+  ctx.fillText(message, canvas.width / 2, 30);
+  ctx.textAlign = "left"; // reset, in case other text drawing gets added later
+}
+
+function drawLevelLabel() {
+  ctx.fillStyle = "white";
+  ctx.font = "18px Arial";
+  ctx.textAlign = "right"; // anchors text to its RIGHT edge instead of left/center
+  ctx.fillText("Level " + (currentLevelIndex + 1), canvas.width - 10, canvas.height - 10);
+  ctx.textAlign = "left"; // reset
+}
+
+loadLevel(0);
 requestAnimationFrame(gameLoop);

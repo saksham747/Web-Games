@@ -2,23 +2,85 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>Bloxorz</title>
   <style>
     body {
       margin: 0;
       display: flex;
+      flex-direction: column;
       justify-content: center;
       align-items: center;
-      height: 100vh;
+      min-height: 100vh;
       background: #222;
+      gap: 20px;
+      padding: 20px;
+      box-sizing: border-box;
+    }
+    #gameContainer {
+      position: relative;
+      max-width: 100%;
+      line-height: 0; /* removes canvas's small inline-baseline gap */
     }
     canvas {
+      display: block;
       background: #333;
+      /* Fixed internal resolution (set via width/height attributes below),
+         but scale visually to fit any screen without touching our drawing math.
+         max-height keeps it from overflowing short/landscape viewports —
+         height:auto still preserves aspect ratio either way, no stretching. */
+      max-width: 100%;
+      max-height: 55vh;
+      height: auto;
     }
+    #controls {
+      display: none; /* hidden by default — shown only on touch devices below */
+      grid-template-columns: 60px 60px;
+      grid-template-rows: 60px 60px;
+      gap: 6px;
+    }
+
+    /* hover: none  -> primary input can't hover (true for touchscreens, false for mouse/trackpad)
+       pointer: coarse -> primary pointer is imprecise (a finger, not a mouse cursor)
+       Together, these reliably mean "touch is the main way you interact with this device" */
+    @media (hover: none) and (pointer: coarse) {
+      #controls {
+        display: grid;
+      }
+    }
+    #controls button {
+      font-size: 24px;
+      border: none;
+      border-radius: 8px;
+      background: #444;
+      color: white;
+      touch-action: manipulation; /* prevents double-tap-to-zoom delay */
+      user-select: none;
+    }
+    #controls button:active {
+      background: #666;
+    }
+    /* Positions rotated 45° into a diamond: each button sits in the
+       screen corner it actually moves toward (see icons below), not
+       compass N/S/E/W — that's the isometric projection's doing. */
+    #btn-left { grid-column: 1; grid-row: 1; } /* moves NW on screen */
+    #btn-up   { grid-column: 2; grid-row: 1; } /* moves NE on screen */
+    #btn-down { grid-column: 1; grid-row: 2; } /* moves SW on screen */
+    #btn-right{ grid-column: 2; grid-row: 2; } /* moves SE on screen */
   </style>
 </head>
 <body>
-  <canvas id="gameCanvas" width="550" height="400"></canvas>
+  <div id="gameContainer">
+    <canvas id="gameCanvas" width="700" height="450"></canvas>
+  </div>
+
+  <div id="controls">
+    <button id="btn-up">↗</button>
+    <button id="btn-left">↖</button>
+    <button id="btn-down">↙</button>
+    <button id="btn-right">↘</button>
+  </div>
+
   <script src="game.js"></script>
 </body>
 </html>
