@@ -50,7 +50,8 @@ def move(cell1, cell2, direction):
 def canonical(cell1, cell2):
     return tuple(sorted([cell1, cell2]))
 
-def solve(grid, label):
+def bfs_shortest(grid):
+    """Returns (length, path) for the shortest solution, or (None, None) if unsolvable."""
     start = goal = None
     for r, row in enumerate(grid):
         for c, v in enumerate(row):
@@ -80,36 +81,33 @@ def solve(grid, label):
                 visited[nstate] = (state, d)
                 queue.append(nstate)
 
+    if not found:
+        return None, None
+
+    path = []
+    s = found
+    while visited[s] is not None:
+        prev, d = visited[s]
+        path.append(d)
+        s = prev
+    path.reverse()
+    return len(path), path
+
+def solve(grid, label):
+    start = goal = None
+    for r, row in enumerate(grid):
+        for c, v in enumerate(row):
+            if v == 3:
+                start = (r, c)
+            if v == 2:
+                goal = (r, c)
+
+    length, path = bfs_shortest(grid)
+
     print(f"--- {label} ---")
     print(f"start={start}, goal={goal}")
-    if found:
-        path = []
-        s = found
-        while visited[s] is not None:
-            prev, d = visited[s]
-            path.append(d)
-            s = prev
-        path.reverse()
-        print(f"SOLVABLE in {len(path)} moves: {path}")
+    if length is not None:
+        print(f"SOLVABLE in {length} moves: {path}")
     else:
-        print(f"NOT SOLVABLE — goal unreachable. States explored: {len(visited)}")
+        print(f"NOT SOLVABLE — goal unreachable.")
     print()
-
-level2 = [
-    [3, 1, 1, 1, 0, 0, 0, 0],
-    [0, 1, 1, 1, 1, 1, 0, 0],
-    [0, 0, 0, 1, 1, 1, 1, 1],
-    [0, 0, 0, 0, 0, 1, 1, 1],
-    [0, 0, 0, 0, 0, 0, 1, 2]
-]
-
-level3 = [
-    [0, 3, 1, 1, 0, 0, 0, 0],
-    [0, 0, 1, 1, 1, 1, 1, 0],
-    [0, 0, 0, 1, 1, 1, 1, 0],
-    [0, 0, 0, 0, 0, 1, 1, 1],
-    [0, 0, 0, 0, 0, 1, 1, 2]
-]
-
-solve(level2, "Level 2")
-solve(level3, "Level 3")

@@ -1,0 +1,121 @@
+import random
+from solve_bloxorz import move, bfs_shortest
+
+# Working area cap: keeps generated levels within a size that fits nicely
+# on the 700x450 canvas once centered (see chat for how this was derived
+# from tileWidth/tileHeight/canvas dimensions).
+MAX_ROWS = 9
+MAX_COLS = 9
+
+
+def random_walk_level(walk_length, max_rows=MAX_ROWS, max_cols=MAX_COLS):
+    """Takes a random sequence of LEGAL rolls from (0,0), laying floor under
+    every cell touched along the way. Guarantees a valid path exists, but
+    NOT that it's the shortest one — bfs_shortest checks that separately."""
+    floors = {(0, 0)}
+    cell1 = cell2 = (0, 0)
+
+    for _ in range(walk_length):
+        dirs = ['up', 'down', 'left', 'right']
+        random.shuffle(dirs)
+        moved = False
+        for d in dirs:
+            nc1, nc2 = move(cell1, cell2, d)
+            if (0 <= nc1[0] < max_rows and 0 <= nc1[1] < max_cols and
+                    0 <= nc2[0] < max_rows and 0 <= nc2[1] < max_cols):
+                cell1, cell2 = nc1, nc2
+                floors.add(cell1)
+                floors.add(cell2)
+                moved = True
+                break
+        if not moved:
+            return None  # walked into a corner with no legal move — discard
+
+    # The goal tile must be landed on STANDING — if the walk ended lying
+    # down, take one more legal move that lands it standing.
+    if cell1 != cell2:
+        landed = False
+        for d in ['up', 'down', 'left', 'right']:
+            nc1, nc2 = move(cell1, cell2, d)
+            if nc1 == nc2 and 0 <= nc1[0] < max_rows and 0 <= nc1[1] < max_cols:
+                cell1 = cell2 = nc1
+                floors.add(cell1)
+                landed = True
+                break
+        if not landed:
+            return None
+
+    start, goal = (0, 0), cell1
+    if start == goal:
+        return None  # trivial, didn't go anywhere
+
+    # Crop to the actual bounding box of tiles touched
+    rows = [r for r, c in floors]
+    cols = [c for r, c in floors]
+    min_r, max_r = min(rows), max(rows)
+    min_c, max_c = min(cols), max(cols)
+
+    grid = [[0] * (max_c - min_c + 1) for _ in range(max_r - min_r + 1)]
+    for (r, c) in floors:
+        grid[r - min_r][c - min_c] = 1
+
+    sr, sc = start[0] - min_r, start[1] - min_c
+    gr, gc = goal[0] - min_r, goal[1] - min_c
+    grid[sr][sc] = 3
+    grid[gr][gc] = 2
+    return grid
+
+
+def find_level(target_moves, tolerance, min_moves_only=False, max_attempts=8000):
+    """Keeps generating random-walk candidates until one's ACTUAL shortest
+    solution (per the real solver) lands within the target range."""
+    for _ in range(max_attempts):
+        # Walk a bit longer than the target — extra floor tiles from the
+        # walk often create shortcuts, so the real shortest solve tends to
+        # come out shorter than the walk itself.
+        walk_length = target_moves + random.randint(0, 12)
+        grid = random_walk_level(walk_length)
+        if grid is None:
+            continue
+
+        length, path = bfs_shortest(grid)
+        if length is None:
+            continue
+
+        if min_moves_only:
+            if length >= target_moves:
+                return grid, length
+        else:
+            if abs(length - target_moves) <= tolerance:
+                return grid, length
+
+    return None, None
+
+
+def format_grid_js(grid, comment):
+    lines = [f"  // {comment}", "  ["]
+    for row in grid:
+        lines.append("    [" + ", ".join(str(v) for v in row) + "],")
+    lines.append("  ]")
+    return "\n".join(lines)
+
+
+if __name__ == "__main__":
+    print("Generating Level 1 (target 10 +/- 2 moves)...")
+    g1, l1 = find_level(target_moves=10, tolerance=2)
+
+    print("Generating Level 2 (target 15 +/- 2 moves)...")
+    g2, l2 = find_level(target_moves=15, tolerance=2)
+
+    print("Generating Level 3 (at least 20 moves)...")
+    g3, l3 = find_level(target_moves=22, tolerance=0, min_moves_only=True)
+
+    if not g1 or not g2 or not g3:
+        print("FAILED to generate one or more levels within the attempt limit.")
+    else:
+        print(f"\nLevel 1 — shortest solution: {l1} moves")
+        print(format_grid_js(g1, "Level 1"))
+        print(f"\nLevel 2 — shortest solution: {l2} moves")
+        print(format_grid_js(g2, "Level 2"))
+        print(f"\nLevel 3 — shortest solution: {l3} moves")
+        print(format_grid_js(g3, "Level 3"))
